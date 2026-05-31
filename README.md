@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/garvranaaa/placement-coach/main/assets/banner.png" alt="ResumeIQ Banner" width="100%">
-
 # ◈ ResumeIQ — AI Placement Coach
 
 **Upload your resume. Get brutally honest AI feedback in under 20 seconds.**
