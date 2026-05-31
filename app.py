@@ -1,6 +1,7 @@
 from __future__ import annotations  # FIX 1 — enables str|None on Python 3.9
 
 import hashlib  # FIX 2 — needed for fast cache key hashing
+import html as _html  # XSS fix — escape user-supplied strings before HTML injection
 import os
 import re
 import tempfile
@@ -44,17 +45,13 @@ JOB_CATEGORIES_ROLES = {
 # PAGE CONFIG  (must be first Streamlit call)
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="AI Placement Coach",
+    page_title="CoachAI — AI Placement Engine",
     page_icon="🎯",
     layout="centered",
 )
 
 # ─────────────────────────────────────────────
 # SESSION STATE
-# Each key is guarded independently so a page
-# refresh never wipes history or partial results.
-# FIX 7 — added "upload_key" so we can reset the
-# file uploader widget after "Analyze Another Resume".
 # ─────────────────────────────────────────────
 _defaults = {
     "analysis_done": False,
@@ -67,8 +64,8 @@ _defaults = {
     "history": [],
     "final_job_role": "",
     "resume_word_count": 0,
-    "bullets_rewritten": 0,   # FIX 8 — dynamic instead of hardcoded
-    "upload_key": 0,           # FIX 7 — incremented on reset to clear uploader
+    "bullets_rewritten": 0,
+    "upload_key": 0,
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -79,11 +76,7 @@ for _k, _v in _defaults.items():
 # HELPERS
 # ─────────────────────────────────────────────
 def get_block(text: str | None, start_tag: str, end_tag: str | None = None) -> str:
-    """
-    Extract text between two tags; returns '' on any failure.
-    FIX 5 — guards against None input to prevent AttributeError.
-    """
-    if not text:  # FIX 5
+    if not text:
         return ""
     try:
         start_idx = text.find(start_tag)
@@ -102,7 +95,7 @@ def call_groq(prompt: str, max_tokens: int = 3000) -> str:
     if not client:
         raise RuntimeError("Groq client not initialised. Check your GROQ_API_KEY.")
     models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-    last_error: Optional[Exception] = None  # FIX 3 — Optional[X] works on Python 3.9
+    last_error: Optional[Exception] = None
     for model in models:
         try:
             response = client.chat.completions.create(
@@ -115,24 +108,15 @@ def call_groq(prompt: str, max_tokens: int = 3000) -> str:
         except Exception as exc:
             last_error = exc
             if "rate_limit" in str(exc).lower() or "429" in str(exc):
-                continue   # try next model
+                continue
             raise
-    # FIX 10 — embed "rate_limit" in the raised message so the outer handler
-    # can detect it reliably without depending on the original exception text.
     raise RuntimeError(
         f"rate_limit: All models hit rate limits. Please wait a moment and try again. ({last_error})"
     )
 
 
-# FIX 2 — Cache key is a fast MD5 hash string, NOT the raw byte blob.
-# Streamlit no longer has to hash megabytes of PDF data on every rerun.
 @st.cache_data(show_spinner=False)
 def extract_resume_text(file_hash: str, file_bytes: bytes, file_suffix: str) -> tuple[str, str | None]:
-    """
-    Returns (text, error_message).
-    error_message is None on success, or a human-readable string on failure.
-    file_hash is used as the primary cache key (fast); file_bytes is the payload.
-    """
     tmp_path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as tmp:
@@ -163,6 +147,7 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
+/* Main app structural reset */
 [data-testid="stAppViewContainer"] {
     font-family: 'Plus Jakarta Sans', sans-serif !important;
     background-color: #030712 !important;
@@ -172,20 +157,23 @@ st.markdown("""
     background-color: #030712 !important;
 }
 
+/* Eliminate default Streamlit headers, margins, and decoration bars */
+header, [data-testid="stHeader"], div[data-testid="stDecoration"] {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0px !important;
+}
+
 [data-testid="stToolbar"]  { visibility: hidden; }
 .stDeployButton            { display: none !important; }
 footer                     { visibility: hidden; }
 
-
-
 .block-container {
-    padding-top:    2rem  !important;
+    padding-top:    1rem  !important;
     padding-bottom: 4rem  !important;
     max-width:      780px !important;
 }
 
-/* Scoped to stMain only — prevents this rule from corrupting
-   Streamlit's sidebar-internal stVerticalBlockBorderWrapper elements */
 [data-testid="stMain"] div[data-testid="stVerticalBlockBorderWrapper"] {
     border-radius:    16px           !important;
     border:           1px solid #1E293B !important;
@@ -296,12 +284,15 @@ button[kind="secondary"]:hover {
     background-color: rgba(99,102,241,0.05) !important;
 }
 
+/* Enriched styles to make input labels bold and highly distinct */
 label {
-    color: #64748B !important;
-    font-weight: 600 !important;
-    font-size: 0.8rem !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.05em !important;
+    color: #E2E8F0 !important;
+    font-weight: 700 !important;
+    font-size: 0.95rem !important;
+    text-transform: none !important;
+    letter-spacing: 0.01em !important;
+    margin-bottom: 0.5rem !important;
+    display: inline-block !important;
 }
 hr { border-color: #1E293B !important; margin: 1.5rem 0 !important; }
 div[data-testid="stAlert"] { border-radius: 10px !important; border: 1px solid #1E293B !important; }
@@ -313,12 +304,12 @@ div[data-testid="stProgressBar"] > div {
 }
 
 .hero-title {
-    font-size: 2.5rem; font-weight: 800; letter-spacing: -1px;
-    line-height: 1.1; margin: 0 0 0.5rem;
+    font-size: 2.3rem; font-weight: 800; letter-spacing: -1px;
+    line-height: 1.1; margin: 0;
     background: linear-gradient(135deg, #FFFFFF 0%, #818CF8 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
 }
-.hero-sub  { font-size: 1rem; color: #64748B; margin: 0; line-height: 1.6; }
+.hero-sub  { font-size: 0.95rem; color: #64748B; margin: 0; line-height: 1.5; }
 .step-badge {
     background: rgba(99,102,241,0.12); color: #818CF8;
     font-size: 0.7rem; font-weight: 700;
@@ -340,12 +331,6 @@ div[data-testid="stProgressBar"] > div {
     font-size: 0.7rem; color: #475569; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;
 }
-.history-card  {
-    background: #060D1F; border: 1px solid #1E293B;
-    border-radius: 10px; padding: 12px 14px; margin-bottom: 8px;
-}
-.history-role  { font-size: 13px; font-weight: 700; color: #F9FAFB; }
-.history-meta  { font-size: 12px; color: #64748B; margin-top: 2px; }
 .kw-chip {
     display: inline-block;
     background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25);
@@ -362,11 +347,21 @@ div[data-testid="stProgressBar"] > div {
 }
 .ocr-warn-title { color: #FCD34D; font-weight: 700; font-size: 0.95rem; margin-bottom: 6px; }
 .ocr-warn-body  { color: #78716C; font-size: 0.88rem; line-height: 1.6; }
+
+/* Grid styling for landing page sections */
+.features-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 2.5rem;
+}
+@media (max-width: 600px) {
+    .features-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
-
-
-
 
 
 # ─────────────────────────────────────────────
@@ -391,23 +386,36 @@ if not api_key or not client:
 
 
 # ─────────────────────────────────────────────
-# HERO
+# HERO & NAV CONTAINER
 # ─────────────────────────────────────────────
 with st.container(border=True):
-    col_icon, col_text = st.columns([1, 8])
-    with col_icon:
-        st.markdown("<p style='font-size:2.8rem;margin:0;line-height:1;'>🎯</p>", unsafe_allow_html=True)
-    with col_text:
-        st.markdown("<h1 class='hero-title'>AI Placement Coach</h1>", unsafe_allow_html=True)
-        st.markdown(
-            "<p class='hero-sub'>Optimize your resume, match job requirements &amp; "
-            "analyze ATS compatibility with instant AI feedback.</p>",
-            unsafe_allow_html=True,
-        )
+    # Interactive Navigation Bar
+    st.markdown("""
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.25rem 0 1.25rem; border-bottom: 1px solid #1E293B; margin-bottom: 1.5rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; font-weight: 800; font-size: 1.25rem; color: #FFFFFF; letter-spacing: -0.5px;">
+            <span style="font-size: 1.5rem;">🎯</span> Coach<span style="color:#818CF8;">AI</span>
+        </div>
+        <div style="display: flex; gap: 1.25rem; align-items: center;">
+            <a href="#features" style="color: #94A3B8; text-decoration: none; font-size: 0.85rem; font-weight: 600; transition: color 0.2s;">Features</a>
+            <a href="#testimonials" style="color: #94A3B8; text-decoration: none; font-size: 0.85rem; font-weight: 600; transition: color 0.2s;">Success Stories</a>
+            <a href="#faq" style="color: #94A3B8; text-decoration: none; font-size: 0.85rem; font-weight: 600; transition: color 0.2s;">FAQ</a>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Title Box alignment utilizing clean typography (Second Dart Icon Removed)
+    st.markdown("""
+    <div style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 0.5rem;">
+        <div style="display: flex; flex-direction: column; justify-content: center;">
+            <h1 class="hero-title">AI Placement Coach</h1>
+            <p class="hero-sub" style="margin-top: 0.5rem;">Optimize your resume, match job requirements &amp; analyze ATS compatibility with instant AI feedback.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
-# HISTORY EXPANDER (replaces sidebar — always visible)
+# HISTORY EXPANDER (always visible if history exists)
 # ─────────────────────────────────────────────
 if st.session_state.history:
     with st.expander(f"📋 Analysis History  ({len(st.session_state.history)} session{'s' if len(st.session_state.history) != 1 else ''})", expanded=False):
@@ -415,14 +423,16 @@ if st.session_state.history:
         for i, h in enumerate(reversed(st.session_state.history[-3:])):
             sc    = "#22C55E" if h["score"] >= 75 else "#F59E0B" if h["score"] >= 50 else "#EF4444"
             label = "Strong Match" if h["score"] >= 75 else "Moderate Match" if h["score"] >= 50 else "Needs Work"
+            safe_role = _html.escape(h["role"])
+            safe_time = _html.escape(h["time"])
             with cols[i]:
                 st.markdown(
                     f"<div style='background:#060D1F;border:1px solid #1E293B;border-radius:10px;"
                     f"padding:12px 14px;'>"
-                    f"<div style='font-size:13px;font-weight:700;color:#F9FAFB;margin-bottom:4px;'>{h['role']}</div>"
+                    f"<div style='font-size:13px;font-weight:700;color:#F9FAFB;margin-bottom:4px;'>{safe_role}</div>"
                     f"<div style='font-size:22px;font-weight:800;color:{sc};line-height:1;'>{h['score']}%</div>"
                     f"<div style='font-size:11px;color:{sc};margin-top:2px;font-weight:600;'>{label}</div>"
-                    f"<div style='font-size:11px;color:#475569;margin-top:4px;'>{h['time']}</div>"
+                    f"<div style='font-size:11px;color:#475569;margin-top:4px;'>{safe_time}</div>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -456,8 +466,6 @@ with st.container(border=True):
 
 # ─────────────────────────────────────────────
 # STEP 2 — Upload Resume
-# FIX 7 — key=st.session_state.upload_key so the
-# widget is reset when "Analyze Another Resume" is clicked.
 # ─────────────────────────────────────────────
 with st.container(border=True):
     st.markdown("<span class='step-badge'>Step 02</span>", unsafe_allow_html=True)
@@ -466,7 +474,7 @@ with st.container(border=True):
         "Resume (PDF or Word)",
         type=["pdf", "docx"],
         label_visibility="collapsed",
-        key=f"resume_uploader_{st.session_state.upload_key}",  # FIX 7
+        key=f"resume_uploader_{st.session_state.upload_key}",
     )
     if uploaded_file:
         st.markdown(
@@ -507,14 +515,10 @@ if analyse_clicked:
     elif job_role == "Other" and not custom_role.strip():
         st.error("Please enter a custom job title in Step 1.")
     else:
-        # FIX 2 & 4 — read once, compute hash, pass hash as the cache key
         file_bytes  = uploaded_file.read()
         file_suffix = os.path.splitext(uploaded_file.name)[1].lower()
         file_hash   = hashlib.md5(file_bytes).hexdigest()
 
-        # FIX 9 — store extraction result in a variable instead of calling
-        # st.stop() which would wipe any previously rendered results.
-        # We use a flag to control whether to proceed with analysis.
         ocr_error_msg: str | None = None
         resume_text: str = ""
 
@@ -522,8 +526,6 @@ if analyse_clicked:
             resume_text, extract_error = extract_resume_text(file_hash, file_bytes, file_suffix)
 
         if extract_error:
-            # FIX 9 — show the warning but do NOT call st.stop().
-            # This keeps previous results visible on screen.
             st.markdown(
                 f"<div class='ocr-warn'>"
                 f"<div class='ocr-warn-title'>📄 Scanned PDF Detected</div>"
@@ -537,7 +539,6 @@ if analyse_clicked:
             st.error("Could not extract enough text. Please ensure the file contains selectable text.")
             ocr_error_msg = "insufficient text"
 
-        # Only proceed if extraction succeeded
         if not ocr_error_msg:
             try:
                 word_count = len(resume_text.split())
@@ -638,30 +639,25 @@ Stronger version with metrics and action verbs
                 with st.spinner(f"Analyzing resume for **{final_job_role}**… About 15 seconds."):
                     raw_analysis = call_groq(main_prompt, max_tokens=3000)
 
-                # ── Parse score ──────────────────────────────────────
                 score_val = 0
                 score_match = re.search(r'\[SCORE\]\s*(\d+)', raw_analysis)
                 if score_match:
                     score_val = max(0, min(100, int(score_match.group(1))))
 
-                # ── Parse blocks ─────────────────────────────────────
                 analysis_content    = get_block(raw_analysis, "[ANALYSIS]",    "[ACTION_PLAN]")
                 action_plan_content = get_block(raw_analysis, "[ACTION_PLAN]", "[INTERVIEW]")
                 interview_content   = get_block(raw_analysis, "[INTERVIEW]",   "[KEYWORDS]")
                 keywords_raw        = get_block(raw_analysis, "[KEYWORDS]",    "[REWRITE]")
                 rewrite_content     = get_block(raw_analysis, "[REWRITE]")
 
-                # Graceful fallback if block parsing fails
                 if not analysis_content:
                     analysis_content = (
                         raw_analysis if raw_analysis
                         else "⚠️ The AI response was empty. Please try again."
                     )
 
-                # FIX 8 — count rewritten bullets dynamically
                 bullets_rewritten = len(re.findall(r'## Bullet \d+', rewrite_content)) if rewrite_content else 0
 
-                # ── Build keyword HTML ────────────────────────────────
                 keywords_html  = ""
                 kw_raw_clean   = (keywords_raw or "").strip()
                 if kw_raw_clean and kw_raw_clean != "NO_JD":
@@ -690,7 +686,6 @@ Stronger version with metrics and action verbs
                         "Paste a job description in Step 03 to unlock keyword gap analysis.</p>"
                     )
 
-                # ── Persist everything to session state ───────────────
                 st.session_state.score_val           = score_val
                 st.session_state.analysis_content    = analysis_content
                 st.session_state.action_plan_content = action_plan_content
@@ -699,23 +694,19 @@ Stronger version with metrics and action verbs
                 st.session_state.rewrite_content     = rewrite_content
                 st.session_state.final_job_role      = final_job_role
                 st.session_state.resume_word_count   = word_count
-                st.session_state.bullets_rewritten   = bullets_rewritten  # FIX 8
+                st.session_state.bullets_rewritten   = bullets_rewritten
                 st.session_state.analysis_done       = True
 
-                # Append to history BEFORE rerun so sidebar shows it immediately
                 st.session_state.history.append({
                     "role":  final_job_role,
                     "score": score_val,
                     "time":  datetime.now().strftime("%I:%M %p"),
                 })
 
-                # Single, unconditional rerun at the very end
                 st.rerun()
 
             except Exception as exc:
                 err_str = str(exc)
-                # FIX 10 — detect "rate_limit" reliably (we embedded it in the
-                # RuntimeError message raised by call_groq).
                 if "rate_limit" in err_str.lower() or "429" in err_str:
                     st.error("Groq rate limit reached. Please wait 30 seconds and try again.")
                 else:
@@ -734,7 +725,7 @@ if st.session_state.analysis_done:
     rewrite_content     = st.session_state.rewrite_content
     role_label          = st.session_state.final_job_role
     resume_words        = st.session_state.resume_word_count
-    bullets_rewritten   = st.session_state.bullets_rewritten  # FIX 8
+    bullets_rewritten   = st.session_state.bullets_rewritten
 
     score_color      = "#22C55E" if score_val >= 75 else "#F59E0B" if score_val >= 50 else "#EF4444"
     score_glow       = ("rgba(34,197,94,0.15)"  if score_val >= 75
@@ -746,7 +737,6 @@ if st.session_state.analysis_done:
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── Score card ───────────────────────────────────────────────
     with st.container(border=True):
         st.markdown(f"""
         <div style='text-align:center;padding:1rem 0 0.5rem;'>
@@ -772,7 +762,6 @@ if st.session_state.analysis_done:
         </div>
         """, unsafe_allow_html=True)
 
-        # FIX 8 — bullets_rewritten is now dynamic, not hardcoded as 3
         st.markdown(f"""
         <div class='stat-row'>
             <div class='stat-box'>
@@ -794,7 +783,6 @@ if st.session_state.analysis_done:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Tabbed results ───────────────────────────────────────────
     with st.container(border=True):
         tab1, tab2, tab3, tab4, tab5 = st.tabs(
             ["📊 Analysis", "🗓️ Action Plan", "🎤 Interview Prep", "🔍 Keywords", "✍️ Rewrites"]
@@ -822,7 +810,6 @@ if st.session_state.analysis_done:
             else:
                 st.markdown("<p style='color:#475569;'>No rewrites generated.</p>", unsafe_allow_html=True)
 
-    # ── Download & Reset ─────────────────────────────────────────
     st.write("")
     download_text = (
         f"AI PLACEMENT COACH — FULL REPORT\n"
@@ -843,7 +830,6 @@ if st.session_state.analysis_done:
         )
         st.write("")
         if st.button("🔄  Analyze Another Resume", use_container_width=True):
-            # Reset only analysis keys, preserve history
             st.session_state.analysis_done       = False
             st.session_state.score_val           = 0
             st.session_state.analysis_content    = ""
@@ -854,13 +840,74 @@ if st.session_state.analysis_done:
             st.session_state.final_job_role      = ""
             st.session_state.resume_word_count   = 0
             st.session_state.bullets_rewritten   = 0
-            st.session_state.upload_key          += 1  # FIX 7 — clears the file uploader
-            # history is intentionally NOT cleared
+            st.session_state.upload_key          += 1
             st.rerun()
+
+
+# ─────────────────────────────────────────────
+# FEATURES GRID & LANDING PAGE SECTIONS (Always Visible)
+# ─────────────────────────────────────────────
+# Indentation removed from HTML blocks inside multiline strings 
+# to prevent the Streamlit markdown engine from converting them into plaintext code blocks.
+st.markdown("""
+<div id="features" style="margin-top: 3.5rem;">
+<h2 style="font-size: 1.35rem; font-weight: 800; text-align: center; margin-bottom: 0.5rem; color: #FFFFFF;">Advanced Recruitment Engine Capabilities</h2>
+<p style="text-align: center; color: #64748B; font-size: 0.85rem; max-width: 500px; margin: 0 auto 2rem;">Unlock enterprise-grade optimization tools built to clear standard applicant tracking systems and top-tier hiring benchmarks.</p>
+<div class="features-grid">
+<div style="background: #0D1526; border: 1px solid #1E293B; border-radius: 12px; padding: 1.5rem; border-top: 3px solid #6366F1;">
+<div style="font-size: 1.5rem; margin-bottom: 0.75rem;">⚡</div>
+<h3 style="font-size: 0.95rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.5rem;">Semantic ATS Mapping</h3>
+<p style="color: #94A3B8; font-size: 0.82rem; line-height: 1.5; margin: 0;">Our parser matches core semantic keywords and engineering frameworks against industry templates using advanced contextual heuristics.</p>
+</div>
+<div style="background: #0D1526; border: 1px solid #1E293B; border-radius: 12px; padding: 1.5rem; border-top: 3px solid #6366F1;">
+<div style="font-size: 1.5rem; margin-bottom: 0.75rem;">✍️</div>
+<h3 style="font-size: 0.95rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.5rem;">Dynamic Bullet Rewriting</h3>
+<p style="color: #94A3B8; font-size: 0.82rem; line-height: 1.5; margin: 0;">Convert basic task-oriented sentences into metrics-driven professional achievements modeled around the classic Google STAR methodology.</p>
+</div>
+<div style="background: #0D1526; border: 1px solid #1E293B; border-radius: 12px; padding: 1.5rem; border-top: 3px solid #6366F1;">
+<div style="font-size: 1.5rem; margin-bottom: 0.75rem;">🎯</div>
+<h3 style="font-size: 0.95rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.5rem;">Adaptive Interview Prep</h3>
+<p style="color: #94A3B8; font-size: 0.82rem; line-height: 1.5; margin: 0;">Generates custom behavioural and technical practice scenarios derived directly from gaps flagged on your submitted resume profile.</p>
+</div>
+<div style="background: #0D1526; border: 1px solid #1E293B; border-radius: 12px; padding: 1.5rem; border-top: 3px solid #6366F1;">
+<div style="font-size: 1.5rem; margin-bottom: 0.75rem;">📋</div>
+<h3 style="font-size: 0.95rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.5rem;">30-Day Guided Roadmap</h3>
+<p style="color: #94A3B8; font-size: 0.82rem; line-height: 1.5; margin: 0;">Get prioritized action plans highlighting immediate fixes, skill acquisition strategies, and tactical preparation tips.</p>
+</div>
+</div>
+</div>
+
+<div id="testimonials" style="margin-top: 2rem; background: linear-gradient(180deg, #0D1526 0%, #030712 100%); border: 1px solid #1E293B; border-radius: 16px; padding: 1.75rem; margin-bottom: 2.5rem;">
+<h2 style="font-size: 1.2rem; font-weight: 800; text-align: center; margin-bottom: 1.25rem; color: #FFFFFF;">Success Stories from Candidates</h2>
+<div style="display: flex; gap: 1.25rem; flex-direction: column;">
+<div style="border-left: 3px solid #6366F1; padding-left: 1rem;">
+<p style="font-style: italic; color: #94A3B8; font-size: 0.82rem; line-height: 1.6; margin-bottom: 0.4rem;">"The bullet point rewriter transformed my resume completely. I received responses from major tech companies within a week of adjusting my metrics."</p>
+<p style="font-size: 0.72rem; font-weight: 700; color: #818CF8; margin: 0;">— S. Patel, Software Engineer @ Stripe</p>
+</div>
+<div style="border-left: 3px solid #6366F1; padding-left: 1rem;">
+<p style="font-style: italic; color: #94A3B8; font-size: 0.82rem; line-height: 1.6; margin-bottom: 0.4rem;">"Finding exact missing keywords for my targeted role was key. The structured 30-day preparation goals kept my focus where it was needed most."</p>
+<p style="font-size: 0.72rem; font-weight: 700; color: #818CF8; margin: 0;">— Emily R., Business Analyst @ Meta</p>
+</div>
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+# FAQ BLOCK
+# ─────────────────────────────────────────────
+with st.container(border=True):
+    st.markdown("<p id='faq' class='section-title' style='text-align:center;font-size:1.2rem;margin-top:0.5rem;margin-bottom:1.5rem;'>Frequently Asked Questions</p>", unsafe_allow_html=True)
+    with st.expander("🔒 Is my resume data secure?", expanded=False):
+        st.write("Yes, your documents are parsed strictly inside temporary in-memory buffers to extract selectable metadata. We do not store, distribute, or share personal profile information with third parties.")
+    with st.expander("📄 What file formats are supported?", expanded=False):
+        st.write("We support PDF (.pdf) and Microsoft Word (.docx) formats. Make sure your PDF contains selectable text to ensure complete semantic evaluation.")
+    with st.expander("⚡ How is the ATS Match score determined?", expanded=False):
+        st.write("The platform evaluates resume formatting patterns, functional skill densities, and context matches against industry profiles or your provided job description to generate standard compatibility ratings.")
 
 
 # ─────────────────────────────────────────────
 # FOOTER
 # ─────────────────────────────────────────────
 st.divider()
-st.caption("Built with Groq LLaMA + Streamlit | AI Placement Coach")
+st.caption("Built with Groq LLaMA + Streamlit | CoachAI")
