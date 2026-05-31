@@ -1,5 +1,4 @@
 <div align="center">
-
 # ◈ ResumeIQ — AI Placement Coach
 
 **Upload your resume. Get brutally honest AI feedback in under 20 seconds.**
