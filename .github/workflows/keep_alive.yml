@@ -1,0 +1,10 @@
+name: Keep Streamlit App Awake
+on:
+  schedule:
+    - cron: "0 */12 * * *" # Runs every 12 hours
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping App
+        run: curl -s https://garvrana-placement-coach.streamlit.app/ > /dev/null
