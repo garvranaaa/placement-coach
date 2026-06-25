@@ -37,7 +37,7 @@ No fluff. No generic tips. Just direct, role-specific analysis powered by Groq's
 
 ## Demo
 
-> **Try it live →** [garvrana-placement-coach.streamlit.app](https://garvrana-placement-coach.streamlit.app)
+> **Try it live →** [garvrana-placement-coach.streamlit.app]([https://garvrana-placement-coach.streamlit.app](https://garvrana-placement-coach.streamlit.app/))
 
 Upload any resume, select a role, and optionally paste a job description for the most accurate results.
 
